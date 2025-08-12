@@ -6,100 +6,48 @@ import "@chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsReques
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
 contract BeadNFTValidator is FunctionsClient, AccessControl {
-    using FunctionsRequest for FunctionsRequest.Request;
+    using FunctionsRequest for FunctionsRequest.sol";
 
     // --- Chainlink Functions configuration ---
     address private immutable i_routers;
     bytes32 private immutable i_donId;
     uint32 private constant GAS_LIMIT = 300000;
     
-    // Universal JavaScript validator - accepts ANY media file type
+    // Updated JavaScript source for filename validation
     string private constant JS_SOURCE =
-        "const validateMediaURI = async (args) => {"
-        "  if (!args || args.length < 2) {"
+        "const beadValidation = async (args) => {"
+        "  if (!args || args.length < 3) {"
         "    return Functions.encodeUint256(0);"
         "  }"
         "  const beadId = args[0];"
-        "  const uri = args[1];"
-        "  "
-        "  // Check if URI is provided"
-        "  if (!uri || uri === '') {"
-        "    return Functions.encodeUint256(0);"
-        "  }"
-        "  "
+        "  const sku = args[1];"
+        "  const fileUrl = args[2];"
         "  try {"
-        "    // Make HTTP request to check if URI is accessible"
         "    const response = await Functions.makeHttpRequest({"
-        "      url: uri,"
-        "      method: 'HEAD',"  // Use HEAD to check accessibility without downloading
-        "      timeout: 15000,"
-        "      headers: {"
-        "        'User-Agent': 'ChainlinkFunctions/1.0',"
-        "        'Accept': '*/*'"
-        "      }"
+        "      url: fileUrl,"
+        "      method: 'HEAD'"
         "    });"
-        "    "
         "    if (response.error) {"
-        "      console.log('HTTP Error:', response.error);"
         "      return Functions.encodeUint256(0);"
         "    }"
-        "    "
-        "    // Check if we got a successful response (200-299 status codes)"
-        "    if (response.status && (response.status < 200 || response.status >= 400)) {"
-        "      console.log('Bad status code:', response.status);"
+        "    const urlParts = fileUrl.split('/');"
+        "    const fileName = urlParts[urlParts.length - 1];"
+        "    const expectedPrefix = sku + '_' + beadId;"
+        "    const fileNameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));"
+        "    if (fileNameWithoutExt !== expectedPrefix) {"
         "      return Functions.encodeUint256(0);"
         "    }"
-        "    "
-        "    // Check content-type to ensure it's some kind of media"
-        "    const contentType = response.headers && response.headers['content-type'];"
-        "    const acceptedTypes = ["
-        "      'image/',      // .jpg, .png, .gif, .webp, etc."
-        "      'video/',      // .mp4, .mov, .avi, .webm, etc."
-        "      'audio/',      // .mp3, .wav, etc."
-        "      'application/octet-stream', // Generic binary"
-        "      'text/plain'   // Sometimes IPFS returns this"
-        "    ];"
-        "    "
-        "    let isValidType = false;"
-        "    if (contentType) {"
-        "      isValidType = acceptedTypes.some(type => "
-        "        contentType.toLowerCase().includes(type)"
-        "      );"
+        "    const fileExtension = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();"
+        "    const validExtensions = ['mov', 'mp4', 'gif', 'pdf', 'jpg', 'jpeg', 'png', 'webp', 'svg', 'mp3', 'wav', 'ogg', 'flac', 'avi', 'mkv', 'webm', 'doc', 'docx', 'txt', 'json'];"
+        "    if (!validExtensions.includes(fileExtension)) {"
+        "      return Functions.encodeUint256(0);"
         "    }"
-        "    "
-        "    // Also accept based on file extension if content-type check fails"
-        "    const validExtensions = ["
-        "      '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg',"
-        "      '.mp4', '.mov', '.avi', '.webm', '.mkv',"
-        "      '.mp3', '.wav', '.ogg',"
-        "      '.pdf', '.json'"
-        "    ];"
-        "    "
-        "    const hasValidExtension = validExtensions.some(ext => "
-        "      uri.toLowerCase().includes(ext)"
-        "    );"
-        "    "
-        "    // Accept if either content-type is valid OR has valid extension"
-        "    if (isValidType || hasValidExtension) {"
-        "      console.log('Valid media file detected');"
-        "      return Functions.encodeUint256(1);"
-        "    }"
-        "    "
-        "    // For IPFS, be more lenient - just check if accessible"
-        "    if (uri.toLowerCase().includes('ipfs')) {"
-        "      console.log('IPFS URI detected, accepting if accessible');"
-        "      return Functions.encodeUint256(1);"
-        "    }"
-        "    "
-        "    console.log('Content type not recognized:', contentType);"
-        "    return Functions.encodeUint256(0);"
-        "    "
+        "    return Functions.encodeUint256(1);"
         "  } catch (error) {"
-        "    console.log('Validation error:', error.message);"
         "    return Functions.encodeUint256(0);"
         "  }"
         "};"
-        "return validateMediaURI(args);";
+        "return beadValidation(args);";
 
     // --- Chainlink Functions state ---
     bytes32 public s_lastRequestId;
@@ -108,28 +56,23 @@ contract BeadNFTValidator is FunctionsClient, AccessControl {
     mapping(bytes32 => string) public requestToBeadId;
     mapping(string => bool) public validatedBeads;
     mapping(string => bool) public validationResults;
-    
-    // Store URIs and their detected types
-    mapping(string => string) public beadURIs;
-    mapping(string => string) public detectedContentTypes;
+    mapping(string => string) public beadIdToSku; // Store SKU for each beadId
 
     // Role for BeadNFT contract
     bytes32 public constant BEAD_NFT_ROLE = keccak256("BEAD_NFT_ROLE");
 
     // Events for Chainlink Functions operations
-    event ValidationRequestSent(bytes32 indexed requestId, string beadId, string uri);
+    event ValidationRequestSent(bytes32 indexed requestId, string beadId, string fileUrl);
     event ValidationFulfilled(
         bytes32 indexed requestId,
         string beadId,
-        bool isValid,
-        string contentType
+        bool isValid
     );
     event ValidationFailed(
         bytes32 indexed requestId,
         string beadId,
         bytes error
     );
-    event BeadURIStored(string beadId, string uri);
 
     // Errors
     error UnexpectedRequestID(bytes32 requestId);
@@ -150,29 +93,31 @@ contract BeadNFTValidator is FunctionsClient, AccessControl {
         _grantRole(BEAD_NFT_ROLE, beadNFTContract);
     }
 
-    // Function to store URI when preMint is called
-    function storeBeadURI(
+    // Function to set SKU for a beadId (called by BeadNFT contract)
+    function setBeadSku(
         string calldata beadId,
-        string calldata uri
+        string calldata sku
     ) external onlyRole(BEAD_NFT_ROLE) {
-        beadURIs[beadId] = uri;
-        emit BeadURIStored(beadId, uri);
+        beadIdToSku[beadId] = sku;
     }
 
     function triggerMetadataValidation(
         uint64 subscriptionId,
-        string calldata beadId
+        string calldata beadId,
+        string calldata fileUrl
     ) external onlyRole(BEAD_NFT_ROLE) returns (bytes32 requestId) {
-        string memory uri = beadURIs[beadId];
-        require(bytes(uri).length > 0, "No URI stored for this bead");
+        require(bytes(fileUrl).length > 0, "File URL cannot be empty");
+        
+        string memory sku = beadIdToSku[beadId];
+        require(bytes(sku).length > 0, "SKU not found for beadId");
 
         FunctionsRequest.Request memory req;
         req.initializeRequestForInlineJavaScript(JS_SOURCE);
 
-        // Pass both beadId and URI to the JavaScript function
-        string[] memory args = new string[](2);
+        string[] memory args = new string[](3);
         args[0] = beadId;
-        args[1] = uri;
+        args[1] = sku;
+        args[2] = fileUrl;
         req.setArgs(args);
 
         requestId = _sendRequest(
@@ -187,7 +132,7 @@ contract BeadNFTValidator is FunctionsClient, AccessControl {
         validatedBeads[beadId] = false;
         validationResults[beadId] = false;
 
-        emit ValidationRequestSent(requestId, beadId, uri);
+        emit ValidationRequestSent(requestId, beadId, fileUrl);
         return requestId;
     }
 
@@ -208,11 +153,7 @@ contract BeadNFTValidator is FunctionsClient, AccessControl {
             uint256 isValidNum = abi.decode(response, (uint256));
             validatedBeads[beadId] = true;
             validationResults[beadId] = (isValidNum == 1);
-            
-            // Store detected content type (could be enhanced to decode from response)
-            detectedContentTypes[beadId] = "validated";
-            
-            emit ValidationFulfilled(requestId, beadId, (isValidNum == 1), "media");
+            emit ValidationFulfilled(requestId, beadId, (isValidNum == 1));
         } else {
             validatedBeads[beadId] = true;
             validationResults[beadId] = false;
@@ -241,21 +182,6 @@ contract BeadNFTValidator is FunctionsClient, AccessControl {
         string memory beadId
     ) external view returns (bool isValidated, bool isValid) {
         return (validatedBeads[beadId], validationResults[beadId]);
-    }
-
-    // Get stored URI for a bead
-    function getBeadURI(string memory beadId) external view returns (string memory) {
-        return beadURIs[beadId];
-    }
-
-    // Get detected content type for a bead
-    function getDetectedContentType(string memory beadId) external view returns (string memory) {
-        return detectedContentTypes[beadId];
-    }
-
-    // Check what file types this validator supports
-    function getSupportedFileTypes() external pure returns (string memory) {
-        return "Images: .jpg, .jpeg, .png, .gif, .webp, .svg | Videos: .mp4, .mov, .avi, .webm, .mkv | Audio: .mp3, .wav, .ogg | Other: .pdf, .json | All IPFS URIs | Any accessible Web2 URLs";
     }
 
     function supportsInterface(
