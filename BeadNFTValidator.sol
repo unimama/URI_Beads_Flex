@@ -212,4 +212,55 @@ contract BeadNFTValidator is FunctionsClient, AccessControl {
             // Store detected content type (could be enhanced to decode from response)
             detectedContentTypes[beadId] = "validated";
             
-            emit
+            emit ValidationFulfilled(requestId, beadId, (isValidNum == 1), "media");
+        } else {
+            validatedBeads[beadId] = true;
+            validationResults[beadId] = false;
+            emit ValidationFailed(requestId, beadId, err);
+        }
+        delete requestToBeadId[requestId];
+    }
+
+    function getValidationStatus(
+        string memory beadId
+    )
+        external
+        view
+        returns (bool wasValidationAttempted, bool isCurrentlyValid)
+    {
+        return (validatedBeads[beadId], validationResults[beadId]);
+    }
+
+    function isBeadValidated(
+        string memory beadId
+    ) external view returns (bool) {
+        return validatedBeads[beadId] && validationResults[beadId];
+    }
+
+    function checkValidation(
+        string memory beadId
+    ) external view returns (bool isValidated, bool isValid) {
+        return (validatedBeads[beadId], validationResults[beadId]);
+    }
+
+    // Get stored URI for a bead
+    function getBeadURI(string memory beadId) external view returns (string memory) {
+        return beadURIs[beadId];
+    }
+
+    // Get detected content type for a bead
+    function getDetectedContentType(string memory beadId) external view returns (string memory) {
+        return detectedContentTypes[beadId];
+    }
+
+    // Check what file types this validator supports
+    function getSupportedFileTypes() external pure returns (string memory) {
+        return "Images: .jpg, .jpeg, .png, .gif, .webp, .svg | Videos: .mp4, .mov, .avi, .webm, .mkv | Audio: .mp3, .wav, .ogg | Other: .pdf, .json | All IPFS URIs | Any accessible Web2 URLs";
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override(AccessControl) returns (bool) {
+        return super.supportsInterface(interfaceId);
+    }
+}
