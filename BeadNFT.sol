@@ -15,9 +15,14 @@ interface IBeadNFTValidator {
     function checkValidation(
         string memory beadId
     ) external view returns (bool isValidated, bool isValid);
-    function triggerMetadataValidation(
+    function requestValidation(
         uint64 subscriptionId,
         string calldata beadId
+    ) external returns (bytes32);
+    function triggerMetadataValidation(
+        uint64 subscriptionId,
+        string calldata beadId,
+        string calldata fileUrl
     ) external returns (bytes32 requestId);
     function getValidationStatus(
         string memory beadId
@@ -25,10 +30,6 @@ interface IBeadNFTValidator {
         external
         view
         returns (bool wasValidationAttempted, bool isCurrentlyValid);
-    function storeBeadURI(
-        string calldata beadId,
-        string calldata uri
-    ) external;
 }
 
 contract BeadNFT is
@@ -40,8 +41,8 @@ contract BeadNFT is
 {
     using Strings for uint256;
 
-    // Sepolia LINK Token address
-    address private constant LINK_TOKEN = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
+    address private constant LINK_TOKEN =
+        0x779877A7B0D9E8603169DdbD7836e478b4624789;
     LinkTokenInterface private constant LINK = LinkTokenInterface(LINK_TOKEN);
 
     // Validator contract reference
@@ -96,13 +97,14 @@ contract BeadNFT is
     // Emergency stop for individual beads
     mapping(string => bool) public emergencyStoppedBeads;
 
-    constructor() ERC721("BeadNFT", "BEAD") ConfirmedOwner(msg.sender) {
-        // Sepolia Chainlink Functions Router
-        address router = 0xb83E47C2bC239B3bf370bc41e1459A34b41238D0;
-        // Sepolia DON ID for Functions
-        bytes32 donId = 0x66756e2d657468657265756d2d7365706f6c69612d3100000000000000000000;
+    constructor(
+        address router,
+        bytes32 donId
+    ) ERC721("BeadNFT", "BEAD") ConfirmedOwner(msg.sender) {
+        require(router != address(0), "Router address cannot be zero");
+        require(donId != bytes32(0), "DON ID cannot be empty");
 
-        // Deploy validator contract with Sepolia parameters
+        // Deploy validator contract
         validator = new BeadNFTValidator(router, donId);
         validator.grantBeadNFTRole(address(this));
 
@@ -119,6 +121,7 @@ contract BeadNFT is
     modifier validateURI(string memory uri) {
         require(bytes(uri).length > 0, "URI cannot be empty");
         require(bytes(uri).length <= 2048, "URI too long");
+        // Removed media file type restrictions - now accepts all media types (.MOV, .MP4, .GIF, .PDF, etc.)
         _;
     }
 
@@ -275,7 +278,8 @@ contract BeadNFT is
 
     function triggerMetadataValidation(
         uint64 subscriptionId,
-        string calldata beadId
+        string calldata beadId,
+        string calldata fileUrl
     )
         external
         onlyAuthorized
@@ -285,7 +289,7 @@ contract BeadNFT is
     {
         require(beadExists[beadId], "Bead ID does not exist");
 
-        return validator.triggerMetadataValidation(subscriptionId, beadId);
+        return validator.triggerMetadataValidation(subscriptionId, beadId, fileUrl);
     }
 
     function getValidationStatus(
@@ -316,10 +320,6 @@ contract BeadNFT is
 
         beads[beadId].uris.push(uri);
         beads[beadId].preMintDate = block.timestamp;
-        
-        // Store the URI in the validator for later validation
-        validator.storeBeadURI(beadId, uri);
-        
         emit BeadPreMinted(beadId, uri, block.timestamp);
     }
 
